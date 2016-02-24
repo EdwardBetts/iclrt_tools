@@ -6,6 +6,7 @@ detail view of the selected region in the lower axes
 
 import matplotlib as mpl
 import numpy as np
+import numpy.ma as ma
 import matplotlib.pyplot as plt
 from matplotlib.widgets import SpanSelector, RectangleSelector
 from matplotlib import cm, dates
@@ -929,19 +930,17 @@ class LMAPlotter(object):
         if not isinstance(lma_file, lma.LMAFile):
             lma_file = lma.LMAFile(lma_file)
 
-        self.raw_data = lma_file.data
-        self.filtered_data = self.raw_data
+        self.raw_data = self.init_data(lma_file.data)
 
         self.cmap = cm.jet
         self.coloring = 'time'
 
-        self.plot_data = {}
+        self.plot_data = self.raw_data.copy()
         self.plot_data_stack = []
         self.plot_x_stack = []
         self.plot_y_stack = []
 
         # Filter the data to default values
-        # self.fix_charge()
         self.filter_rc2()
         self.filter_num_stations()
         self.filter_alt()
@@ -953,15 +952,28 @@ class LMAPlotter(object):
         mpl.rcParams['keymap.home'] = ''
         mpl.rcParams['keymap.zoom'] = ''
 
-    def fix_charge(self):
-        for s in self.filtered_data:
+    def init_data(self, raw_data):
+        data = {}
+        data['seconds_of_day'] = ma.array([s.seconds_of_day for s in raw_data])
+        data['rc2'] = ma.array([s.rc2 for s in raw_data])
+        data['num_stations'] = ma.array([s.num_stations for s in raw_data])
+
+        data['t'] = ma.array([s.time for s in raw_data])
+        data['x'] = ma.array([s.xyz_coords[0] for s in raw_data])
+        data['y'] = ma.array([s.xyz_coords[1] for s in raw_data])
+        data['z'] = ma.array([s.xyz_coords[2] for s in raw_data])
+
+        data['charge'] = ma.array([s.charge for s in raw_data])
+        for s in data['charge']:
             # For coloring purposes, creates an array of RGBA values arrays
-            if s.charge == 3:
-                s.charge = np.array([1.0, 0.0, 0.0, 1.0])  # RGBA for red
-            elif s.charge == 0:
-                s.charge = np.array([0.0, 1.0, 0.0, 1.0])  # RGBA for green
-            elif s.charge == -3:
-                s.charge = np.array([0.0, 0.0, 1.0, 1.0])  # RGBA for blue
+            if s == 3:
+                s = np.array([1.0, 0.0, 0.0, 1.0])  # RGBA for red
+            elif s:
+                s = np.array([0.0, 1.0, 0.0, 1.0])  # RGBA for green
+            elif s == -3:
+                s = np.array([0.0, 0.0, 1.0, 1.0])  # RGBA for blue
+
+        return data
 
     def filter_rc2(self, rc2=5.0):
         """
@@ -971,11 +983,11 @@ class LMAPlotter(object):
         :return:
         """
 
-        # Filter the data
-        self.filtered_data = [s for s in self.filtered_data if s.rc2 <= rc2]
+        # Get the mask that filters the data
+        mask = ma.masked_less(self.plot_data['rc2'], rc2).mask
 
         # Update the plot data
-        self.update_data()
+        self.update_data(mask)
 
     def filter_num_stations(self, num_stations=5.0):
         """
@@ -986,12 +998,11 @@ class LMAPlotter(object):
         :return:
         """
 
-        # Filter the data
-        self.filtered_data = [s for s in self.filtered_data if
-                              s.num_stations >= num_stations]
+        # Mask sources with num_stations greater than specified
+        mask = ma.masked_greater_equal(self.plot_data['num_stations'], num_stations)
 
         # Update the plot data
-        self.update_data()
+        self.update_data(mask)
 
     def filter_alt(self, alt=20E3):
         """
@@ -1002,14 +1013,13 @@ class LMAPlotter(object):
         :return:
         """
 
-        # Filter the data
-        self.filtered_data = [s for s in self.filtered_data if
-                              s.xyz_coords[2] <= alt]
+        # Mask sources with altitudes greater than specified
+        mask = ma.masked_greater_equal(self.plot_data['z'], alt)
 
         # Update the plot data
-        self.update_data()
+        self.update_data(mask)
 
-    def filter_xy(self, xlims=[-20.0E3, 20.0E3], ylims=[-20.0E3, 20.0E3]):
+    def filter_xy(self, xlims=(-20.0E3, 20.0E3), ylims=(-20.0E3, 20.0E3)):
         """
         Filters the data to only show the points that are within the specified
         limits xlims, ylims.
@@ -1018,31 +1028,19 @@ class LMAPlotter(object):
         :param ylims: a list with the limist for the y-axis
         :return:
         """
-        # Get the order for xlims and ylims to be ascending
-        xmin = min(xlims)
-        xmax = max(xlims)
-        xlims = [xmin, xmax]
-
-        ymin = min(ylims)
-        ymax = max(ylims)
-        ylims = [ymin, ymax]
 
         # Filter the x axis
-        self.filtered_data = [s for s in self.filtered_data if
-                              s.xyz_coords[0] >= xlims[0]]
-
-        self.filtered_data = [s for s in self.filtered_data if
-                              s.xyz_coords[0] <= xlims[1]]
+        x_mask = ma.mask_or(ma.masked_less_equal(self.plot_data['x'], min(xlims)),
+                            ma.masked_greater_equal(self.plot_data['x'], max(xlims)))
 
         # Filter the y axis
-        self.filtered_data = [s for s in self.filtered_data if
-                              s.xyz_coords[1] >= ylims[0]]
+        y_mask = ma.mask_or(ma.masked_less_equal(self.plot_data['y'], min(ylims)),
+                            ma.masked_greater_equal(self.plot_data['y'], max(ylims)))
 
-        self.filtered_data = [s for s in self.filtered_data if
-                              s.xyz_coords[1] <= ylims[1]]
+        mask = ma.mask_or(x_mask, y_mask)
 
         # Update all other variables
-        self.update_data()
+        self.update_data(mask)
 
     def filter_time(self, tlims):
         """
@@ -1065,34 +1063,25 @@ class LMAPlotter(object):
                                  microseconds=t1.microsecond)
 
         # Filter the data
-        self.filtered_data = [s for s in self.filtered_data if
-                              s.seconds_of_day >= dt0.total_seconds()]
+        tstart_mask = ma.masked_less_equal(self.plot_data['seconds_of_day'], dt0.total_seconds())
+        tend_mask = ma.masked_greater_equal(self.plot_data['seconds_of_day'], dt1.total_seconds())
 
-        self.filtered_data = [s for s in self.filtered_data if
-                              s.seconds_of_day <= dt1.total_seconds()]
+        mask = ma.mask_or(tstart_mask, tend_mask)
 
         # Update all other variables
-        self.update_data()
+        self.update_data(mask)
 
-    def update_data(self):
-        self.plot_data['t'] = np.array([s.time for s in self.filtered_data])
-        self.plot_data['x'] = np.array([s.xyz_coords[0] for s in
-                                        self.filtered_data])
-        self.plot_data['y'] = np.array([s.xyz_coords[1] for s in
-                                        self.filtered_data])
-        self.plot_data['z'] = np.array([s.xyz_coords[2] for s in
-                                        self.filtered_data])
-        self.plot_data['seconds_of_day'] = np.array([s.seconds_of_day for s in
-                                                     self.filtered_data])
-        self.plot_data['charge'] = np.array([s.charge for s in
-                                             self.filtered_data])
+    def update_data(self, mask):
+        original = self.plot_data['t'].mask
 
-        # print('t shape', self.plot_data['t'].shape)
-        # print('x shape', self.plot_data['x'].shape)
-        # print('y shape', self.plot_data['y'].shape)
-        # print('z shape', self.plot_data['z'].shape)
-        # print('secs shape', self.plot_data['seconds_of_day'].shape)
-        # print(' ')
+        self.plot_data['t'].mask = ma.mask_or(original, mask)
+        self.plot_data['x'].mask = ma.mask_or(original, mask)
+        self.plot_data['y'].mask = ma.mask_or(original, mask)
+        self.plot_data['z'].mask = ma.mask_or(original, mask)
+        self.plot_data['seconds_of_day'].mask = ma.mask_or(original, mask)
+        self.plot_data['charge'].mask = ma.mask_or(original, mask)
+        self.plot_data['rc2'].mask = ma.mask_or(original, mask)
+        self.plot_data['num_stations'].mask = ma.mask_or(original, mask)
 
     def scale_data(self, mult=1):
         self.plot_data['x'] *= mult
@@ -1120,19 +1109,19 @@ class LMAPlotter(object):
         self.filtered_data = self.raw_data
         self.plot_data = {}
 
-    def sort_time(self):
-        """
-        Sorts all the plot_data arrays by time in ascending order
-        :return:
-        """
-        indices = np.argsort(self.plot_data['seconds_of_day'])
-
-        self.plot_data['t'] = self.plot_data['t'][indices]
-        self.plot_data['x'] = self.plot_data['x'][indices]
-        self.plot_data['y'] = self.plot_data['y'][indices]
-        self.plot_data['z'] = self.plot_data['z'][indices]
-        self.plot_data['seconds_of_day'] = self.plot_data['seconds_of_day'][indices]
-        self.plot_data['charge'] = self.plot_data['charge'][indices]
+    # def sort_time(self):
+    #     """
+    #     Sorts all the plot_data arrays by time in ascending order
+    #     :return:
+    #     """
+    #     indices = np.argsort(self.plot_data['seconds_of_day'])
+    #
+    #     self.plot_data['t'] = self.plot_data['t'][indices]
+    #     self.plot_data['x'] = self.plot_data['x'][indices]
+    #     self.plot_data['y'] = self.plot_data['y'][indices]
+    #     self.plot_data['z'] = self.plot_data['z'][indices]
+    #     self.plot_data['seconds_of_day'] = self.plot_data['seconds_of_day'][indices]
+    #     self.plot_data['charge'] = self.plot_data['charge'][indices]
 
     def alt_histogram(self):
         h = self.plot_data['z']
@@ -1145,7 +1134,7 @@ class LMAPlotter(object):
     def date_format_major(self, x, pos=None):
         x = dates.num2date(x)
 
-        if pos == 0 or pos==-1:
+        if pos == 0 or pos == -1:
             fmt = '%H:%M:%S.%f'
 
         else:
@@ -1166,7 +1155,7 @@ class LMAPlotter(object):
 
         label = x.strftime(fmt)
         ind_dot = label.find('.')
-        label = label[:ind_dot+5]
+        label = label[:ind_dot + 5]
         label = label.rstrip('0')
         label = label.rstrip('.')
 
