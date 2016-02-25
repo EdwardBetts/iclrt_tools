@@ -5,6 +5,7 @@ import sys
 import matplotlib.pyplot as plt
 import datetime
 import matplotlib as mpl
+import pickle
 
 # Import custom module
 import iclrt_tools.lma.lma as lma
@@ -14,15 +15,23 @@ fileName = '/home/jaime/Documents/LMA/Data/Triggered/2015/150827/LYLOUT_150827_2
 
 fileName = '/home/jaime/Documents/ResearchTopics/Publications/Lightning Evolution/Storm 08-27-2015/LMA/ChargeAnalysis-1of2-exported.dat'
 
-print("Reading File...")
-# f = lma.LMAFile(fileName)
+print("Reading LMA File...")
 start = datetime.datetime.now()
-f = lma.XLMAExportedFile(fileName)
-print(datetime.datetime.now() - start)
+try:
+    file = open(fileName[:-4] + '.p', 'rb')
+    f = pickle.load(file)
 
+except IOError:
+    print('No pickle found.')
+    # f = lma.LMAFile(fileName)
+    f = lma.XLMAExportedFile(fileName)
+
+print('  Time to read: {0} s'.format((datetime.datetime.now() - start).total_seconds()))
+
+print("Creating LMA Plotter...")
 start = datetime.datetime.now()
 p = df.LMAPlotter(f)
-print(datetime.datetime.now() - start)
+print('  Time to create: {0} s'.format((datetime.datetime.now() - start).total_seconds()))
 
 print("Filtering...")
 

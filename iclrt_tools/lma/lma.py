@@ -115,7 +115,7 @@ class XLMAExportedFile(LMAFile):
     def __init__(self, file_name, load_data=True):
         super(XLMAExportedFile, self).__init__(file_name, False)
 
-        self.file_name = file_name
+        # ICLRT Launcher Coordinates
         self.center_coordinate = latlon.Location(29.9429917, -82.0332305, 0.00)
 
         if load_data:
