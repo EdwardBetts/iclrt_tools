@@ -926,7 +926,7 @@ class RadarPlotter(object):
 
 
 class LMAPlotter(object):
-    def __init__(self, lma_file):
+    def __init__(self, lma_file, filter_default=False):
         if not isinstance(lma_file, lma.LMAFile):
             lma_file = lma.LMAFile(lma_file)
 
@@ -935,15 +935,20 @@ class LMAPlotter(object):
         self.cmap = cm.jet
         self.coloring = 'time'
 
-        self.plot_data = self.raw_data.copy()
+        self.filtered_data = self.raw_data.copy()
+        self.plot_data = None
         self.plot_data_stack = []
         self.plot_x_stack = []
         self.plot_y_stack = []
 
-        # Filter the data to default values
-        self.filter_rc2()
-        self.filter_num_stations()
-        self.filter_alt()
+        if filter_default:
+            # Filter the data to default values
+            print('    Filtering rc2...')
+            self.filter_rc2()
+            print('    Filtering num_stations...')
+            self.filter_num_stations()
+            print('    Filtering alt...')
+            self.filter_alt()
 
         # Reset all default matplotlib figure keymaps
         mpl.rcParams['keymap.fullscreen'] = ''
@@ -962,16 +967,7 @@ class LMAPlotter(object):
         data['x'] = ma.array([s.xyz_coords[0] for s in raw_data])
         data['y'] = ma.array([s.xyz_coords[1] for s in raw_data])
         data['z'] = ma.array([s.xyz_coords[2] for s in raw_data])
-
         data['charge'] = ma.array([s.charge for s in raw_data])
-        for s in data['charge']:
-            # For coloring purposes, creates an array of RGBA values arrays
-            if s == 3:
-                s = np.array([1.0, 0.0, 0.0, 1.0])  # RGBA for red
-            elif s:
-                s = np.array([0.0, 1.0, 0.0, 1.0])  # RGBA for green
-            elif s == -3:
-                s = np.array([0.0, 0.0, 1.0, 1.0])  # RGBA for blue
 
         return data
 
@@ -984,7 +980,7 @@ class LMAPlotter(object):
         """
 
         # Get the mask that filters the data
-        mask = ma.masked_less(self.plot_data['rc2'], rc2).mask
+        mask = ma.masked_greater(self.filtered_data['rc2'], rc2).mask
 
         # Update the plot data
         self.update_data(mask)
@@ -999,7 +995,7 @@ class LMAPlotter(object):
         """
 
         # Mask sources with num_stations greater than specified
-        mask = ma.masked_greater_equal(self.plot_data['num_stations'], num_stations)
+        mask = ma.masked_less_equal(self.filtered_data['num_stations'], num_stations).mask
 
         # Update the plot data
         self.update_data(mask)
@@ -1014,7 +1010,7 @@ class LMAPlotter(object):
         """
 
         # Mask sources with altitudes greater than specified
-        mask = ma.masked_greater_equal(self.plot_data['z'], alt)
+        mask = ma.masked_greater_equal(self.filtered_data['z'], alt).mask
 
         # Update the plot data
         self.update_data(mask)
@@ -1030,17 +1026,13 @@ class LMAPlotter(object):
         """
 
         # Filter the x axis
-        x_mask = ma.mask_or(ma.masked_less_equal(self.plot_data['x'], min(xlims)),
-                            ma.masked_greater_equal(self.plot_data['x'], max(xlims)))
+        x_mask = ma.masked_outside(self.filtered_data['x'], min(xlims), max(xlims)).mask
 
         # Filter the y axis
-        y_mask = ma.mask_or(ma.masked_less_equal(self.plot_data['y'], min(ylims)),
-                            ma.masked_greater_equal(self.plot_data['y'], max(ylims)))
-
-        mask = ma.mask_or(x_mask, y_mask)
+        y_mask = ma.masked_outside(self.filtered_data['y'], min(ylims), max(ylims)).mask
 
         # Update all other variables
-        self.update_data(mask)
+        self.update_data(ma.mask_or(x_mask, y_mask))
 
     def filter_time(self, tlims):
         """
@@ -1063,25 +1055,23 @@ class LMAPlotter(object):
                                  microseconds=t1.microsecond)
 
         # Filter the data
-        tstart_mask = ma.masked_less_equal(self.plot_data['seconds_of_day'], dt0.total_seconds())
-        tend_mask = ma.masked_greater_equal(self.plot_data['seconds_of_day'], dt1.total_seconds())
-
-        mask = ma.mask_or(tstart_mask, tend_mask)
+        mask = ma.masked_outside(self.filtered_data['seconds_of_day'],
+                                 dt0.total_seconds(), dt1.total_seconds()).mask
 
         # Update all other variables
         self.update_data(mask)
 
     def update_data(self, mask):
-        original = self.plot_data['t'].mask
+        original = self.filtered_data['t'].mask
 
-        self.plot_data['t'].mask = ma.mask_or(original, mask)
-        self.plot_data['x'].mask = ma.mask_or(original, mask)
-        self.plot_data['y'].mask = ma.mask_or(original, mask)
-        self.plot_data['z'].mask = ma.mask_or(original, mask)
-        self.plot_data['seconds_of_day'].mask = ma.mask_or(original, mask)
-        self.plot_data['charge'].mask = ma.mask_or(original, mask)
-        self.plot_data['rc2'].mask = ma.mask_or(original, mask)
-        self.plot_data['num_stations'].mask = ma.mask_or(original, mask)
+        self.filtered_data['t'].mask = ma.mask_or(original, mask)
+        self.filtered_data['x'].mask = ma.mask_or(original, mask)
+        self.filtered_data['y'].mask = ma.mask_or(original, mask)
+        self.filtered_data['z'].mask = ma.mask_or(original, mask)
+        self.filtered_data['seconds_of_day'].mask = ma.mask_or(original, mask)
+        self.filtered_data['charge'].mask = ma.mask_or(original, mask)
+        self.filtered_data['rc2'].mask = ma.mask_or(original, mask)
+        self.filtered_data['num_stations'].mask = ma.mask_or(original, mask)
 
     def scale_data(self, mult=1):
         self.plot_data['x'] *= mult
@@ -1107,7 +1097,6 @@ class LMAPlotter(object):
         :return:
         """
         self.filtered_data = self.raw_data
-        self.plot_data = {}
 
     # def sort_time(self):
     #     """
@@ -1220,78 +1209,38 @@ class LMAPlotter(object):
 
         return maj_ticks, min_ticks
 
-    def get_plot_data(self, x, y, x_old, x_new, y_old, y_new):
+    def get_colors(self, charge):
+        colors = []
+
+        for s in charge:
+            # For coloring purposes, creates an array of RGBA values arrays
+            if s == 3:
+                colors.append(np.array([1.0, 0.0, 0.0, 1.0]))  # RGBA for red
+            elif s == 0:
+                colors.append(np.array([0.0, 1.0, 0.0, 1.0]))  # RGBA for green
+            elif s == -3:
+                colors.append(np.array([0.0, 0.0, 1.0, 1.0]))  # RGBA for blue
+
+        return colors
+
+    def get_plot_data(self, x_array, y_array, xlims, ylims):
         """
         Gets the data for the current plot
-        :param x: entire data for x
-        :param y: entire data for y
-        :param x_old: old limits
-        :param x_new: new limits
-        :param y_old: old limits
-        :param y_new: new limits
+        :param x_array: entire data plotted on x axis
+        :param y_array: entire data plotted on y axis
+        :param xlims: new x limits
+        :param ylims: new y limits
         :return:
         """
-        temp_x = x
-        temp_y = y
-        temp_t = self.plot_data['t']
-        temp_charge = self.plot_data['charge']
 
-        if x_old is not None:
-            # Sort by x and get old x limits
-            temp_t = temp_t[np.argsort(temp_x)]
-            temp_y = temp_y[np.argsort(temp_x)]
-            temp_charge = temp_charge[np.argsort(temp_x)]
-            temp_x = temp_x[np.argsort(temp_x)]
+        x_mask = ma.masked_outside(x_array, xlims[0], xlims[1]).mask
+        y_mask = ma.masked_outside(y_array, ylims[0], ylims[1]).mask
+        mask = ma.mask_or(x_mask, y_mask)
 
-            indmin, indmax = np.searchsorted(temp_x, x_old)
-            indmax = min(len(temp_x)-1, indmax)
-
-            temp_x = temp_x[indmin:indmax]
-            temp_y = temp_y[indmin:indmax]
-            temp_t = temp_t[indmin:indmax]
-            temp_charge = temp_charge[indmin:indmax]
-
-            # Sort by y and get old y limits
-            temp_t = temp_t[np.argsort(temp_y)]
-            temp_x = temp_x[np.argsort(temp_y)]
-            temp_charge = temp_charge[np.argsort(temp_y)]
-            temp_y = temp_y[np.argsort(temp_y)]
-
-            indmin, indmax = np.searchsorted(temp_y, (y_old[0], y_old[1]))
-            indmax = min(len(temp_y)-1, indmax)
-
-            temp_x = temp_x[indmin:indmax]
-            temp_y = temp_y[indmin:indmax]
-            temp_t = temp_t[indmin:indmax]
-            temp_charge = temp_charge[indmin:indmax]
-
-        # Sort by x and get new  x limits
-        temp_t = temp_t[np.argsort(temp_x)]
-        temp_y = temp_y[np.argsort(temp_x)]
-        temp_charge = temp_charge[np.argsort(temp_x)]
-        temp_x = temp_x[np.argsort(temp_x)]
-
-        indmin, indmax = np.searchsorted(temp_x, x_new)
-        indmax = min(len(temp_x)-1, indmax)
-
-        temp_x = temp_x[indmin:indmax]
-        temp_y = temp_y[indmin:indmax]
-        temp_t = temp_t[indmin:indmax]
-        temp_charge = temp_charge[indmin:indmax]
-
-        # Sort by y and get new y limits
-        temp_t = temp_t[np.argsort(temp_y)]
-        temp_x = temp_x[np.argsort(temp_y)]
-        temp_charge = temp_charge[np.argsort(temp_y)]
-        temp_y = temp_y[np.argsort(temp_y)]
-
-        indmin, indmax = np.searchsorted(temp_y, (y_new[0], y_new[1]))
-        indmax = min(len(temp_y)-1, indmax)
-
-        temp_x = temp_x[indmin:indmax]
-        temp_y = temp_y[indmin:indmax]
-        temp_t = temp_t[indmin:indmax]
-        temp_charge = temp_charge[indmin:indmax]
+        temp_x = x_array[~mask]
+        temp_y = y_array[~mask]
+        temp_t = self.plot_data['t'][~mask]
+        temp_charge = self.plot_data['charge'][~mask]
 
         # If the x axis corresponds to time (such as in alt_t plots), then
         # convert to the appropriate numbers so that the DateFormatter from
@@ -1304,15 +1253,12 @@ class LMAPlotter(object):
         except IndexError:
             raise
 
-        # Sort by time one last time
-        temp_y = temp_y[np.argsort(temp_t)]
-        temp_x = temp_x[np.argsort(temp_t)]
-        temp_charge = temp_charge[np.argsort(temp_t)]
-        temp_t = temp_t[np.argsort(temp_t)]
-
         return temp_x, temp_y, temp_t, temp_charge
 
-    def plot_alt_t(self, lims=[0, 20e3]):
+    def plot_alt_t(self, lims=(0, 20e3)):
+        if self.plot_data is None:
+            self.plot_data = self.filtered_data.copy()
+
         self.plot_x_stack = []
         self.plot_y_stack = []
 
@@ -1335,8 +1281,8 @@ class LMAPlotter(object):
         self.ax_alt_t.set_xlabel('Time (s)')
 
         self.ax_alt_t.set_ylim(lims)
-        self.ax_alt_t.set_xlim([self.plot_data['t'][0],
-                                self.plot_data['t'][-1]])
+        self.ax_alt_t.set_xlim([self.plot_data['t'][~self.plot_data['t'].mask][0],
+                                self.plot_data['t'][~self.plot_data['t'].mask][-1]])
 
         self.ax_alt_t.xaxis.set_minor_locator(mpl.ticker.AutoMinorLocator(2))
         self.ax_alt_t.xaxis.set_minor_formatter(mpl.ticker.FuncFormatter(self.date_format_minor))
@@ -1367,10 +1313,10 @@ class LMAPlotter(object):
                                                     self.onclick_alt_t)
 
         self.kp_alt_t = self.fig_alt_t.canvas.mpl_connect('key_press_event',
-                                                       self.onkeypress_alt_t)
+                                                          self.onkeypress_alt_t)
 
         self.kr_alt_t = self.fig_alt_t.canvas.mpl_connect('key_release_event',
-                                                       self.onkeyrelease_alt_t)
+                                                          self.onkeyrelease_alt_t)
 
     def onselect_alt_t(self, xmin, xmax):
         if xmin == xmax:
@@ -1409,9 +1355,15 @@ class LMAPlotter(object):
 
         try:
             if not self.plot_x_stack:
-                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'], self.plot_data['z'], None, [xmin, xmax], None, [ymin_old*1e3, ymax_old*1e3])
+                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'],
+                                                                     self.plot_data['z'],
+                                                                     [xmin, xmax],
+                                                                     [ymin_old*1e3, ymax_old*1e3])
             else:
-                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'], self.plot_data['z'], self.plot_x_stack[-1], [xmin, xmax], [self.plot_y_stack[-1][0]*1e3, self.plot_y_stack[-1][1]*1e3], [ymin_old*1e3, ymax_old*1e3])
+                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'],
+                                                                     self.plot_data['z'],
+                                                                     [xmin, xmax],
+                                                                     [ymin_old*1e3, ymax_old*1e3])
 
         except IndexError:
             return True
@@ -1448,9 +1400,15 @@ class LMAPlotter(object):
 
         try:
             if not self.plot_x_stack:
-                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'], self.plot_data['z'], None, [xmin_old, xmax_old], None, [ymin*1e3, ymax*1e3])
+                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'],
+                                                                     self.plot_data['z'],
+                                                                     [xmin_old, xmax_old],
+                                                                     [ymin*1e3, ymax*1e3])
             else:
-                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'], self.plot_data['z'], self.plot_x_stack[-1], [xmin_old, xmax_old], [self.plot_y_stack[-1][0]*1e3, self.plot_y_stack[-1][1]*1e3], [ymin*1e3, ymax*1e3])
+                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'],
+                                                                     self.plot_data['z'],
+                                                                     [xmin_old, xmax_old],
+                                                                     [ymin*1e3, ymax*1e3])
 
         except IndexError:
             return True
@@ -1469,7 +1427,11 @@ class LMAPlotter(object):
 
             if self.plot_x_stack:
 
-                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'], self.plot_data['z'], self.plot_x_stack[-1], self.plot_x_stack[-1], [self.plot_y_stack[-1][0]*1e3, self.plot_y_stack[-1][1]*1e3], [self.plot_y_stack[-1][0]*1e3, self.plot_y_stack[-1][1]*1e3])
+                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'],
+                                                                     self.plot_data['z'],
+                                                                     self.plot_x_stack[-1],
+                                                                     [self.plot_y_stack[-1][0]*1e3,
+                                                                      self.plot_y_stack[-1][1]*1e3])
 
                 self.update_graph_alt_t(thisx, thisy, thist, thischarge)
 
@@ -1481,7 +1443,11 @@ class LMAPlotter(object):
         if event.key == 'r':
             if self.plot_x_stack:
 
-                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'], self.plot_data['z'], self.plot_x_stack[0], self.plot_x_stack[0], [self.plot_y_stack[0][0]*1e3, self.plot_y_stack[0][1]*1e3], [self.plot_y_stack[0][0]*1e3, self.plot_y_stack[0][1]*1e3])
+                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'],
+                                                                     self.plot_data['z'],
+                                                                     self.plot_x_stack[0],
+                                                                     [self.plot_y_stack[0][0]*1e3,
+                                                                      self.plot_y_stack[0][1]*1e3])
 
                 self.update_graph_alt_t(thisx, thisy, thist, thischarge)
 
@@ -1511,7 +1477,7 @@ class LMAPlotter(object):
         if self.coloring == 'time':
             colors = self.cmap(np.linspace(0, 1, len(thist)))
         elif self.coloring == 'charge':
-            colors = thischarge
+            colors = self.get_colors(thischarge)
 
         self.scat_alt_t.set_color(colors)
 
@@ -1562,6 +1528,9 @@ class LMAPlotter(object):
 
     def plot_plan(self, fig=None, ax=None, xlims=[-20E3, 20E3],
                   ylims=[-20E3, 20E3]):
+        if self.plot_data is None:
+            self.plot_data = self.filtered_data.copy()
+
         self.plot_x_stack = []
         self.plot_y_stack = []
 
@@ -1729,6 +1698,9 @@ class LMAPlotter(object):
         self.ax_plan.set_xlim(min_x, max_x)
 
     def plot_proj(self, projection='NS', lims=(-20E3, 20E3), zlims=(0, 20E3)):
+        if self.plot_data is None:
+            self.plot_data = self.filtered_data.copy()
+
         self.plot_x_stack = []
         self.plot_y_stack = []
         self.projection = projection
@@ -1926,6 +1898,10 @@ class LMAPlotter(object):
         self.ax_proj.set_xlim(min_x, max_x)
 
     def plot_3D(self, xlims=[-20E3, 20E3], ylims=[-20E3, 20E3], zlims=[0, 20E3], projections=False, colorbar=False):
+
+        if self.plot_data is None:
+            self.plot_data = self.filtered_data.copy()
+
         self.fig_3d = plt.figure()
         self.ax_3d = self.fig_3d.add_subplot(111, projection='3d')
 
@@ -1964,6 +1940,9 @@ class LMAPlotter(object):
 
 
     def plot_all(self):
+        if self.plot_data is None:
+            self.plot_data = self.filtered_data.copy()
+
         self.fig_all = plt.figure()
         self.gs = GridSpec(5, 4)
         self.gs.update(hspace=.5)
