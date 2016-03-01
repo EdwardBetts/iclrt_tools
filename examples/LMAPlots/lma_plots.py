@@ -13,34 +13,34 @@ import iclrt_tools.plotting.dfplots as df
 
 fileName = '/home/jaime/Documents/LMA/Data/Triggered/2015/150827/LYLOUT_150827_235318_0008_8stations.dat'
 
-fileName = '/home/jaime/Documents/ResearchTopics/Publications/Lightning Evolution/Storm 08-27-2015/LMA/ChargeAnalysis-1of2-exported.dat'
+fileName = '/home/jaime/Documents/ResearchTopics/Publications/Lightning Evolution/Storm 08-27-2015/LMA/CodeTest/ChargeAnalysis-1of2-exported.dat'
 
 print("Reading LMA File...")
 start = datetime.datetime.now()
 try:
     file = open(fileName[:-4] + '.p', 'rb')
+    print('  Pickle found.')
     f = pickle.load(file)
 
 except IOError:
-    print('No pickle found.')
+    print('  No pickle found.')
     # f = lma.LMAFile(fileName)
     f = lma.XLMAExportedFile(fileName)
-
-print('  Time to read: {0} s'.format((datetime.datetime.now() - start).total_seconds()))
+print('  Time to read: {0} s'.format(
+                            (datetime.datetime.now() - start).total_seconds()))
 
 print("Creating LMA Plotter...")
 start = datetime.datetime.now()
 p = df.LMAPlotter(f)
-print('  Time to create: {0} s'.format((datetime.datetime.now() - start).total_seconds()))
+print('  Time to create: {0} s'.format(
+                            (datetime.datetime.now() - start).total_seconds()))
 
 print("Filtering...")
-
 p.filter_rc2(1.0)
 p.filter_xy([-20E3, 20E3], [-20E3, 20E3])
 p.filter_num_stations(6)
 
 print("Plotting...")
-
 # p.set_cmap('grey')
 p.set_coloring('charge')
 p.plot_alt_t()

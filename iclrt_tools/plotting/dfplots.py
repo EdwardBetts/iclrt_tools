@@ -930,12 +930,14 @@ class LMAPlotter(object):
         if not isinstance(lma_file, lma.LMAFile):
             lma_file = lma.LMAFile(lma_file)
 
-        self.raw_data = self.init_data(lma_file.data)
+        self.date = lma_file.date
+        # self.raw_data = self.init_data(lma_file.data)
+        self.filtered_data = self.init_data(lma_file.data)
 
         self.cmap = cm.jet
         self.coloring = 'time'
 
-        self.filtered_data = self.raw_data.copy()
+        # self.filtered_data = self.raw_data.copy()
         self.plot_data = None
         self.plot_data_stack = []
         self.plot_x_stack = []
@@ -995,7 +997,8 @@ class LMAPlotter(object):
         """
 
         # Mask sources with num_stations greater than specified
-        mask = ma.masked_less_equal(self.filtered_data['num_stations'], num_stations).mask
+        mask = ma.masked_less_equal(self.filtered_data['num_stations'],
+                                    num_stations).mask
 
         # Update the plot data
         self.update_data(mask)
@@ -1021,15 +1024,17 @@ class LMAPlotter(object):
         limits xlims, ylims.
 
         :param xlims: a list with the limits for the x-axis
-        :param ylims: a list with the limist for the y-axis
+        :param ylims: a list with the limits for the y-axis
         :return:
         """
 
         # Filter the x axis
-        x_mask = ma.masked_outside(self.filtered_data['x'], min(xlims), max(xlims)).mask
+        x_mask = ma.masked_outside(self.filtered_data['x'], min(xlims),
+                                   max(xlims)).mask
 
         # Filter the y axis
-        y_mask = ma.masked_outside(self.filtered_data['y'], min(ylims), max(ylims)).mask
+        y_mask = ma.masked_outside(self.filtered_data['y'], min(ylims),
+                                   max(ylims)).mask
 
         # Update all other variables
         self.update_data(ma.mask_or(x_mask, y_mask))
@@ -1062,7 +1067,7 @@ class LMAPlotter(object):
         self.update_data(mask)
 
     def update_data(self, mask):
-        original = self.filtered_data['t'].mask
+        original = self.filtered_data['seconds_of_day'].mask
 
         self.filtered_data['t'].mask = ma.mask_or(original, mask)
         self.filtered_data['x'].mask = ma.mask_or(original, mask)
@@ -1096,7 +1101,8 @@ class LMAPlotter(object):
         Resets the data to the unfiltered raw data.
         :return:
         """
-        self.filtered_data = self.raw_data
+        for data in self.filtered_data:
+            self.filtered_data[data].mask = ma.nomask
 
     # def sort_time(self):
     #     """
@@ -1223,38 +1229,6 @@ class LMAPlotter(object):
 
         return colors
 
-    def get_plot_data(self, x_array, y_array, xlims, ylims):
-        """
-        Gets the data for the current plot
-        :param x_array: entire data plotted on x axis
-        :param y_array: entire data plotted on y axis
-        :param xlims: new x limits
-        :param ylims: new y limits
-        :return:
-        """
-
-        x_mask = ma.masked_outside(x_array, xlims[0], xlims[1]).mask
-        y_mask = ma.masked_outside(y_array, ylims[0], ylims[1]).mask
-        mask = ma.mask_or(x_mask, y_mask)
-
-        temp_x = x_array[~mask]
-        temp_y = y_array[~mask]
-        temp_t = self.plot_data['t'][~mask]
-        temp_charge = self.plot_data['charge'][~mask]
-
-        # If the x axis corresponds to time (such as in alt_t plots), then
-        # convert to the appropriate numbers so that the DateFormatter from
-        # the axis can represent the values correctly
-        try:
-            if isinstance(temp_x[0], datetime.datetime):
-                for i in range(len(temp_x)):
-                    temp_x[i] = dates.date2num(temp_x[i])
-
-        except IndexError:
-            raise
-
-        return temp_x, temp_y, temp_t, temp_charge
-
     def plot_alt_t(self, lims=(0, 20e3)):
         if self.plot_data is None:
             self.plot_data = self.filtered_data.copy()
@@ -1267,28 +1241,35 @@ class LMAPlotter(object):
         self.fig_alt_t = plt.figure()
         self.ax_alt_t = self.fig_alt_t.add_subplot(111)
 
-        if self.coloring == 'time':
-            colors = self.cmap(np.linspace(0, 1, len(self.plot_data['t'])))
-        elif self.coloring == 'charge':
-            colors = self.plot_data['charge']
+        mask = self.plot_data['t'].mask
 
-        self.scat_alt_t = self.ax_alt_t.scatter(self.plot_data['t'],
-                                                self.plot_data['z']*1E-3,
-                                                marker='.', c=colors,
-                                                cmap=self.cmap, s=30, lw=0)
+        if self.coloring == 'time':
+            colors = self.cmap(np.linspace(0, 1, len(self.plot_data['t'][~mask])))
+        elif self.coloring == 'charge':
+            colors = self.get_colors(self.plot_data['charge'][~mask])
+
+        self.scat_alt_t.set_color(colors)
+
+        self.scat_alt_t = self.ax_alt_t.scatter(
+                                            self.plot_data['t'][~mask],
+                                            self.plot_data['z'][~mask]*1E-3,
+                                            marker='.', c=colors,
+                                            cmap=self.cmap, s=30, lw=0)
 
         self.ax_alt_t.set_ylabel('Altitude (km)')
         self.ax_alt_t.set_xlabel('Time (s)')
 
         self.ax_alt_t.set_ylim(lims)
-        self.ax_alt_t.set_xlim([self.plot_data['t'][~self.plot_data['t'].mask][0],
-                                self.plot_data['t'][~self.plot_data['t'].mask][-1]])
+        self.ax_alt_t.set_xlim([self.plot_data['t'][~mask][0],
+                                self.plot_data['t'][~mask][-1]])
 
         self.ax_alt_t.xaxis.set_minor_locator(mpl.ticker.AutoMinorLocator(2))
-        self.ax_alt_t.xaxis.set_minor_formatter(mpl.ticker.FuncFormatter(self.date_format_minor))
+        self.ax_alt_t.xaxis.set_minor_formatter(
+                            mpl.ticker.FuncFormatter(self.date_format_minor))
 
         self.ax_alt_t.xaxis.set_major_locator(mpl.ticker.LinearLocator(5))
-        self.ax_alt_t.xaxis.set_major_formatter(mpl.ticker.FuncFormatter(self.date_format_major))
+        self.ax_alt_t.xaxis.set_major_formatter(
+                            mpl.ticker.FuncFormatter(self.date_format_major))
 
         # for label in self.ax_alt_t.xaxis.get_ticklabels(minor=True):
         #     label.set_rotation(30)
@@ -1312,18 +1293,20 @@ class LMAPlotter(object):
                                                     'button_release_event',
                                                     self.onclick_alt_t)
 
-        self.kp_alt_t = self.fig_alt_t.canvas.mpl_connect('key_press_event',
-                                                          self.onkeypress_alt_t)
+        self.kp_alt_t = self.fig_alt_t.canvas.mpl_connect(
+                                                        'key_press_event',
+                                                        self.onkeypress_alt_t)
 
-        self.kr_alt_t = self.fig_alt_t.canvas.mpl_connect('key_release_event',
-                                                          self.onkeyrelease_alt_t)
+        self.kr_alt_t = self.fig_alt_t.canvas.mpl_connect(
+                                                    'key_release_event',
+                                                    self.onkeyrelease_alt_t)
 
     def onselect_alt_t(self, xmin, xmax):
         if xmin == xmax:
             return True
 
-        # Epoch time, used for num2date
-        t = datetime.datetime(1970, 1, 1)
+        # # Epoch time, used for num2date
+        # t = datetime.datetime(1970, 1, 1)
 
         # Save the current graph's limits
         xmin_old = self.ax_alt_t.get_xlim()[0]
@@ -1353,22 +1336,23 @@ class LMAPlotter(object):
         xmax = datetime.datetime(a.year, a.month, a.day, a.hour, a.minute,
                                  a.second, a.microsecond)
 
-        try:
-            if not self.plot_x_stack:
-                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'],
-                                                                     self.plot_data['z'],
-                                                                     [xmin, xmax],
-                                                                     [ymin_old*1e3, ymax_old*1e3])
-            else:
-                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'],
-                                                                     self.plot_data['z'],
-                                                                     [xmin, xmax],
-                                                                     [ymin_old*1e3, ymax_old*1e3])
+        xmin = (xmin - self.date).total_seconds()
+        xmax = (xmax - self.date).total_seconds()
 
-        except IndexError:
-            return True
+        thist, thisy, thischarge = self.get_plot_data_alt_t(self.plot_data['t'],
+                                                      self.plot_data['z'],
+                                                      self.plot_data['charge'],
+                                                      [xmin, xmax],
+                                                      [ymin_old*1e3,
+                                                       ymax_old*1e3])
 
-        self.update_graph_alt_t(thisx, thisy, thist, thischarge)
+        print(thist)
+        # Convert to the appropriate numbers so that the DateFormatter from
+        # the axis can represent the values correctly
+        for i in range(len(thist)):
+            thist[i] = dates.date2num(thist[i])
+
+        self.update_graph_alt_t(thist, thisy, thischarge)
 
         # Append values to stack
         self.plot_x_stack.append([xmin_old, xmax_old])
@@ -1398,22 +1382,22 @@ class LMAPlotter(object):
         xmax_old = datetime.datetime(a.year, a.month, a.day, a.hour, a.minute,
                                      a.second, a.microsecond)
 
-        try:
-            if not self.plot_x_stack:
-                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'],
-                                                                     self.plot_data['z'],
-                                                                     [xmin_old, xmax_old],
-                                                                     [ymin*1e3, ymax*1e3])
-            else:
-                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'],
-                                                                     self.plot_data['z'],
-                                                                     [xmin_old, xmax_old],
-                                                                     [ymin*1e3, ymax*1e3])
+        xmin = (xmin_old - self.date).total_seconds()
+        xmax = (xmax_old - self.date).total_seconds()
 
-        except IndexError:
-            return True
+        thist, thisy, thischarge = self.get_plot_data_alt_t(
+                                    self.plot_data['seconds_of_day'],
+                                    self.plot_data['z'],
+                                    self.plot_data['charge'],
+                                    [xmin, xmax],
+                                    [ymin*1e3, ymax*1e3])
 
-        self.update_graph_alt_t(thisx, thisy, thist, thischarge)
+        # Convert to the appropriate numbers so that the DateFormatter from
+        # the axis can represent the values correctly
+        for i in range(len(thist)):
+            thist[i] = dates.date2num(thist[i])
+
+        self.update_graph_alt_t(thist, thisy, thischarge)
 
         # Append values to stack
         self.plot_x_stack.append([xmin_old, xmax_old])
@@ -1423,17 +1407,28 @@ class LMAPlotter(object):
         self.fig_alt_t.canvas.draw()
 
     def onclick_alt_t(self, event):
-        if event.button == 3 and (event.inaxes is self.ax_alt_t or self.synced):
+        if event.button == 3 and \
+                (event.inaxes is self.ax_alt_t or self.synced):
 
             if self.plot_x_stack:
 
-                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'],
-                                                                     self.plot_data['z'],
-                                                                     self.plot_x_stack[-1],
-                                                                     [self.plot_y_stack[-1][0]*1e3,
-                                                                      self.plot_y_stack[-1][1]*1e3])
+                xmin = (self.plot_x_stack[-1][0] - self.date).total_seconds()
+                xmax = (self.plot_x_stack[-1][1] - self.date).total_seconds()
 
-                self.update_graph_alt_t(thisx, thisy, thist, thischarge)
+                thist, thisy, thischarge = self.get_plot_data_alt_t(
+                                            self.plot_data['seconds_of_day'],
+                                            self.plot_data['z'],
+                                            self.plot_data['charge'],
+                                            [xmin, xmax],
+                                            [self.plot_y_stack[-1][0]*1e3,
+                                             self.plot_y_stack[-1][1]*1e3])
+
+                # Convert to the appropriate numbers so that the DateFormatter from
+                # the axis can represent the values correctly
+                for i in range(len(thist)):
+                    thist[i] = dates.date2num(thist[i])
+
+                self.update_graph_alt_t(thist, thisy, thischarge)
 
                 self.plot_x_stack = self.plot_x_stack[:-1]
 
@@ -1443,13 +1438,23 @@ class LMAPlotter(object):
         if event.key == 'r':
             if self.plot_x_stack:
 
-                thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['t'],
-                                                                     self.plot_data['z'],
-                                                                     self.plot_x_stack[0],
-                                                                     [self.plot_y_stack[0][0]*1e3,
-                                                                      self.plot_y_stack[0][1]*1e3])
+                xmin = (self.plot_x_stack[0][0] - self.date).total_seconds()
+                xmax = (self.plot_x_stack[0][1] - self.date).total_seconds()
 
-                self.update_graph_alt_t(thisx, thisy, thist, thischarge)
+                thist, thisy, thischarge = self.get_plot_data_alt_t(
+                                            self.plot_data['seconds_of_day'],
+                                            self.plot_data['z'],
+                                            self.plot_data['charge'],
+                                            [xmin, xmax],
+                                            [self.plot_y_stack[0][0]*1e3,
+                                            self.plot_y_stack[0][1]*1e3])
+
+                # Convert to the appropriate numbers so that the DateFormatter from
+                # the axis can represent the values correctly
+                for i in range(len(thist)):
+                    thist[i] = dates.date2num(thist[i])
+
+                self.update_graph_alt_t(thist, thisy, thischarge)
 
                 self.plot_x_stack = []
 
@@ -1467,10 +1472,39 @@ class LMAPlotter(object):
             self.span_alt_t.visible = True
             self.span_alt_t_v.visible = False
 
-    def update_graph_alt_t(self, thisx, thisy, thist, thischarge):
+    def get_plot_data_alt_t(self, x_array, y_array, charge_array, xlims,
+                            ylims):
+        """
+        Gets the data for the current plot
+        :param x_array: entire data plotted on x axis
+        :param y_array: entire data plotted on y axis
+        :param xlims: new x limits
+        :param ylims: new y limits
+        :return:
+        """
+        print(xlims)
+        if isinstance(x_array.data[0], datetime.datetime):
+            x_array = self.filtered_data['seconds_of_day']
+            flag = True
+
+        x_mask = ma.masked_outside(x_array, xlims[0], xlims[1]).mask
+        y_mask = ma.masked_outside(y_array, ylims[0], ylims[1]).mask
+        mask = ma.mask_or(x_mask, y_mask)
+
+        if flag:
+            temp_x = self.filtered_data['t'][~mask]
+        else:
+            temp_x = x_array[~mask]
+
+        temp_y = y_array[~mask]
+        temp_charge = charge_array[~mask]
+
+        return temp_x, temp_y, temp_charge
+
+    def update_graph_alt_t(self, thist, thisy, thischarge):
         thisy *= 1e-3
 
-        data = np.hstack((thisx[:, np.newaxis], thisy[:, np.newaxis]))
+        data = np.hstack((thist[:, np.newaxis], thisy[:, np.newaxis]))
         # thischarge = thischarge[:, np.newaxis]
         self.scat_alt_t.set_offsets(data)
 
@@ -1493,13 +1527,13 @@ class LMAPlotter(object):
         if mn_y < min_y:
             min_y = mn_y
 
-        max_y = max_y + (max_y - min_y)*.1
+        max_y += (max_y - min_y)*.1
 
         max_x = -np.inf
         min_x = np.inf
 
-        mx_x = np.max(thisx)
-        mn_x = np.min(thisx)
+        mx_x = np.max(thist)
+        mn_x = np.min(thist)
 
         if mx_x > max_x:
             max_x = mx_x
@@ -1507,18 +1541,20 @@ class LMAPlotter(object):
         if mn_x < min_x:
             min_x = mn_x
 
-        max_x = max_x + (max_x - min_x)*.01
-        min_x = min_x - (max_x - min_x)*.01
+        max_x += (max_x - min_x)*.01
+        min_x -= (max_x - min_x)*.01
 
         # Set plot's limits
         self.ax_alt_t.set_ylim(min_y, max_y)
         self.ax_alt_t.set_xlim(min_x, max_x)
 
         self.ax_alt_t.xaxis.set_minor_locator(mpl.ticker.AutoMinorLocator(2))
-        self.ax_alt_t.xaxis.set_minor_formatter(mpl.ticker.FuncFormatter(self.date_format_minor))
+        self.ax_alt_t.xaxis.set_minor_formatter(
+                            mpl.ticker.FuncFormatter(self.date_format_minor))
 
         self.ax_alt_t.xaxis.set_major_locator(mpl.ticker.LinearLocator(5))
-        self.ax_alt_t.xaxis.set_major_formatter(mpl.ticker.FuncFormatter(self.date_format_major))
+        self.ax_alt_t.xaxis.set_major_formatter(
+                            mpl.ticker.FuncFormatter(self.date_format_major))
 
         # for label in self.ax_alt_t.xaxis.get_ticklabels(minor=True):
         #     label.set_rotation(30)
@@ -1526,8 +1562,8 @@ class LMAPlotter(object):
         # for label in self.ax_alt_t.xaxis.get_ticklabels(minor=False):
         #     label.set_rotation(30)
 
-    def plot_plan(self, fig=None, ax=None, xlims=[-20E3, 20E3],
-                  ylims=[-20E3, 20E3]):
+    def plot_plan(self, fig=None, ax=None, xlims=(-20E3, 20E3),
+                  ylims=(-20E3, 20E3)):
         if self.plot_data is None:
             self.plot_data = self.filtered_data.copy()
 
@@ -1542,10 +1578,21 @@ class LMAPlotter(object):
             self.fig_plan = fig
             self.ax_plan = ax
 
+        mask = self.plot_data['t'].mask
+
+        if self.coloring == 'time':
+            start = datetime.datetime.now()
+            colors = self.cmap(np.linspace(0, 1, len(self.plot_data['t'][~mask])))
+            print(datetime.datetime.now() - start)
+
+        elif self.coloring == 'charge':
+            start = datetime.datetime.now()
+            colors = self.get_colors(self.plot_data['charge'][~mask])
+            print(datetime.datetime.now() - start)
+
         self.scat_plan = self.ax_plan.scatter(self.plot_data['x'],
                                               self.plot_data['y'], marker='.',
-                                              c=self.plot_data[
-                                                 'seconds_of_day'],
+                                              c=colors,
                                               cmap=self.cmap, s=30, lw=0)
 
         self.ax_plan.set_xlim(xlims)
@@ -1595,12 +1642,9 @@ class LMAPlotter(object):
         ymin = np.min([y_start, y_end])
         ymax = np.max([y_start, y_end])
 
-        if not self.plot_x_stack:
-            thisx, thisy, thist = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], None, [xmin, xmax], None, [ymin, ymax])
-        else:
-            thisx, thisy, thist = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], self.plot_x_stack[-1], [xmin, xmax], self.plot_y_stack[-1], [ymin, ymax])
+        thisx, thisy, thist, thischarge = self.get_plot_data_plan(self.plot_data['x'], self.plot_data['y'], [xmin, xmax], [ymin, ymax])
 
-        self.update_graph_plan(thisx, thisy, thist)
+        self.update_graph_plan(thisx, thisy, thist, thischarge)
 
         self.plot_x_stack.append([xmin_old, xmax_old])
         self.plot_y_stack.append([ymin_old, ymax_old])
@@ -1621,12 +1665,9 @@ class LMAPlotter(object):
                 ymin = self.plot_y_stack[-1][0]
                 ymax = self.plot_y_stack[-1][1]
 
-                if not self.plot_x_stack:
-                    thisx, thisy, thist = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], None, [xmin, xmax], None, [ymin, ymax])
-                else:
-                    thisx, thisy, thist = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], self.plot_x_stack[-1], [xmin, xmax], self.plot_y_stack[-1], [ymin, ymax])
+                thisx, thisy, thist, thischarge = self.get_plot_data_plan(self.plot_data['x'], self.plot_data['y'], [xmin, xmax], [ymin, ymax])
 
-                self.update_graph_plan(thisx, thisy, thist)
+                self.update_graph_plan(thisx, thisy, thist, thischarge)
 
                 self.plot_x_stack = self.plot_x_stack[:-1]
                 self.plot_y_stack = self.plot_y_stack[:-1]
@@ -1643,12 +1684,9 @@ class LMAPlotter(object):
                 ymin = self.plot_y_stack[0][0]
                 ymax = self.plot_y_stack[0][1]
 
-                if not self.plot_x_stack:
-                    thisx, thisy, thist = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], None, [xmin, xmax], None, [ymin, ymax])
-                else:
-                    thisx, thisy, thist = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], self.plot_x_stack[-1], [xmin, xmax], self.plot_y_stack[-1], [ymin, ymax])
+                thisx, thisy, thist, thischarge = self.get_plot_data_plan(self.plot_data['x'], self.plot_data['y'], [xmin, xmax], [ymin, ymax])
 
-                self.update_graph_plan(thisx, thisy, thist)
+                self.update_graph_plan(thisx, thisy, thist, thischarge)
 
                 self.plot_x_stack = []
                 self.plot_y_stack = []
@@ -1658,10 +1696,36 @@ class LMAPlotter(object):
         elif event.key == ' ' or event.key == 'escape':
             plt.close(self.fig_plan)
 
-    def update_graph_plan(self, thisx, thisy, thist):
+    def get_plot_data_plan(self, x_array, y_array, xlims, ylims):
+        """
+        Gets the data for the current plot
+        :param x_array: entire data plotted on x axis
+        :param y_array: entire data plotted on y axis
+        :param xlims: new x limits
+        :param ylims: new y limits
+        :return:
+        """
+
+        x_mask = ma.masked_outside(x_array, xlims[0], xlims[1]).mask
+        y_mask = ma.masked_outside(y_array, ylims[0], ylims[1]).mask
+        mask = ma.mask_or(x_mask, y_mask)
+
+        temp_x = x_array[~mask]
+        temp_y = y_array[~mask]
+        temp_t = self.filtered_data['t'][~mask]
+        temp_charge = self.filtered_data['charge'][~mask]
+
+        return temp_x, temp_y, temp_t, temp_charge
+
+    def update_graph_plan(self, thisx, thisy, thist, thischarge):
         data = np.hstack((thisx[:, np.newaxis], thisy[:, np.newaxis]))
         self.scat_plan.set_offsets(data)
-        colors = self.cmap(np.linspace(0, 1, len(thist)))
+
+        if self.coloring == 'time':
+            colors = self.cmap(np.linspace(0, 1, len(thist)))
+        elif self.coloring == 'charge':
+            colors = self.get_colors(thischarge)
+
         self.scat_plan.set_color(colors)
 
         max_y = -np.inf
@@ -1780,11 +1844,11 @@ class LMAPlotter(object):
             temp_x = self.plot_data['x']
 
         if not self.plot_x_stack:
-            thisx, thisy, thist = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], None, [xmin, xmax], None, [ymin, ymax])
+            thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], [xmin, xmax], [ymin, ymax])
         else:
-            thisx, thisy, thist = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], self.plot_x_stack[-1], [xmin, xmax], self.plot_y_stack[-1], [ymin, ymax])
+            thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], [xmin, xmax], [ymin, ymax])
 
-        self.update_graph_proj(thisx, thisy, thist)
+        self.update_graph_proj(thisx, thisy, thist, thischarge)
 
         self.plot_x_stack.append([xmin_old, xmax_old])
         self.plot_y_stack.append([ymin_old, ymax_old])
@@ -1814,11 +1878,11 @@ class LMAPlotter(object):
                     temp_x = self.plot_data['x']
 
                 if not self.plot_x_stack:
-                    thisx, thisy, thist = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], None, [xmin, xmax], None, [ymin, ymax])
+                    thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], [xmin, xmax], [ymin, ymax])
                 else:
-                    thisx, thisy, thist = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], self.plot_x_stack[-1], [xmin, xmax], self.plot_y_stack[-1], [ymin, ymax])
+                    thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], [xmin, xmax], [ymin, ymax])
 
-                self.update_graph_proj(thisx, thisy, thist)
+                self.update_graph_proj(thisx, thisy, thist, thischarge)
 
                 self.plot_x_stack = self.plot_x_stack[:-1]
                 self.plot_y_stack = self.plot_y_stack[:-1]
@@ -1844,11 +1908,11 @@ class LMAPlotter(object):
                     temp_x = self.plot_data['x']
 
                 if not self.plot_x_stack:
-                    thisx, thisy, thist = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], None, [xmin, xmax], None, [ymin, ymax])
+                    thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], [xmin, xmax], [ymin, ymax])
                 else:
-                    thisx, thisy, thist = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], self.plot_x_stack[-1], [xmin, xmax], self.plot_y_stack[-1], [ymin, ymax])
+                    thisx, thisy, thist, thischarge = self.get_plot_data(self.plot_data['x'], self.plot_data['y'], [xmin, xmax], [ymin, ymax])
 
-                self.update_graph_proj(thisx, thisy, thist)
+                self.update_graph_proj(thisx, thisy, thist, thischarge)
 
                 self.plot_x_stack = []
                 self.plot_y_stack = []
@@ -1858,10 +1922,15 @@ class LMAPlotter(object):
         elif event.key == ' ' or event.key == 'escape':
             plt.close(self.fig_proj)
 
-    def update_graph_proj(self, thisx, thisy, thist):
+    def update_graph_proj(self, thisx, thisy, thist, thischarge):
         data = np.hstack((thisx[:, np.newaxis], thisy[:, np.newaxis]))
         self.scat_proj.set_offsets(data)
-        colors = self.cmap(np.linspace(0, 1, len(thist)))
+
+        if self.coloring == 'time':
+            colors = self.cmap(np.linspace(0, 1, len(thist)))
+        elif self.coloring == 'charge':
+            colors = self.get_colors(thischarge)
+
         self.scat_proj.set_color(colors)
 
         max_y = -np.inf
@@ -1897,7 +1966,7 @@ class LMAPlotter(object):
         self.ax_proj.set_ylim(min_y, max_y)
         self.ax_proj.set_xlim(min_x, max_x)
 
-    def plot_3D(self, xlims=[-20E3, 20E3], ylims=[-20E3, 20E3], zlims=[0, 20E3], projections=False, colorbar=False):
+    def plot_3D(self, xlims=(-20E3, 20E3), ylims=(-20E3, 20E3), zlims=(0, 20E3), projections=False, colorbar=False):
 
         if self.plot_data is None:
             self.plot_data = self.filtered_data.copy()
